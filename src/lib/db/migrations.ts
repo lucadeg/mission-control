@@ -1625,6 +1625,201 @@ const migrations: Migration[] = [
 
       console.log('[Migration 029] repo_readiness_checks table created');
     }
+  },
+  {
+    id: '030',
+    name: 'add_app_settings',
+    up: (db) => {
+      console.log('[Migration 030] Adding app_settings table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+    }
+  },
+  {
+    id: '031',
+    name: 'add_codex_sessions',
+    up: (db) => {
+      console.log('[Migration 031] Adding codex_sessions table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS codex_sessions (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT REFERENCES agents(id),
+          task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+          codex_thread_id TEXT,
+          pid INTEGER,
+          status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+          command TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          log_path TEXT,
+          exit_code INTEGER,
+          signal TEXT,
+          error TEXT,
+          started_at TEXT DEFAULT (datetime('now')),
+          ended_at TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      db.exec('CREATE INDEX IF NOT EXISTS idx_codex_sessions_task ON codex_sessions(task_id, status)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_codex_sessions_agent ON codex_sessions(agent_id, status)');
+    }
+  },
+  {
+    id: '032',
+    name: 'add_session_insights',
+    up: (db) => {
+      console.log('[Migration 032] Adding task_insights table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS task_insights (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          duration_seconds INTEGER,
+          time_to_first_commit INTEGER,
+          build_attempts INTEGER,
+          test_pass_rate REAL,
+          stall_count INTEGER,
+          error_count INTEGER,
+          bottleneck_summary TEXT,
+          improved_prompt TEXT,
+          timeline_data TEXT,
+          insights_json TEXT,
+          generated_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(task_id)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_task_insights_product ON task_insights(product_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_task_insights_task ON task_insights(task_id)`);
+
+      console.log('[Migration 032] task_insights table created');
+    }
+  },
+  {
+    id: '033',
+    name: 'add_mcp_integrations',
+    up: (db) => {
+      console.log('[Migration 033] Adding product_mcp_servers table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS product_mcp_servers (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          transport TEXT NOT NULL CHECK (transport IN ('stdio', 'sse')),
+          command TEXT,
+          url TEXT,
+          env_vars TEXT,
+          available_tools TEXT,
+          enabled INTEGER DEFAULT 1,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_product_mcp_servers_product ON product_mcp_servers(product_id, enabled)`);
+
+      console.log('[Migration 033] product_mcp_servers table created');
+    }
+  },
+  {
+    id: '034',
+    name: 'add_browser_qa_columns',
+    up: (db) => {
+      console.log('[Migration 034] Adding browser QA columns...');
+
+      db.exec(`ALTER TABLE products ADD COLUMN browser_test_enabled INTEGER DEFAULT 1`);
+      db.exec(`ALTER TABLE tasks ADD COLUMN browser_test_url TEXT`);
+
+      console.log('[Migration 034] browser_test_enabled (products) and browser_test_url (tasks) added');
+    }
+  },
+  {
+    id: '035',
+    name: 'add_pr_review_autofix',
+    up: (db) => {
+      console.log('[Migration 035] Adding PR review auto-fix columns...');
+
+      const tasksInfo = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+      if (!tasksInfo.some(col => col.name === 'review_fix_count')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN review_fix_count INTEGER DEFAULT 0`);
+      }
+      if (!tasksInfo.some(col => col.name === 'review_fix_max')) {
+        db.exec(`ALTER TABLE tasks ADD COLUMN review_fix_max INTEGER DEFAULT 3`);
+      }
+
+      const productsInfo = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+      if (!productsInfo.some(col => col.name === 'auto_fix_pr_reviews')) {
+        db.exec(`ALTER TABLE products ADD COLUMN auto_fix_pr_reviews INTEGER DEFAULT 1`);
+      }
+
+      console.log('[Migration 035] PR review auto-fix columns added');
+    }
+  },
+  {
+    id: '036',
+    name: 'add_codebase_explorer',
+    up: (db) => {
+      console.log('[Migration 036] Adding codebase_snapshots table and exploration_depth column...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS codebase_snapshots (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          commit_sha TEXT NOT NULL,
+          file_tree TEXT NOT NULL,
+          framework TEXT,
+          language TEXT,
+          loc INTEGER,
+          key_files TEXT,
+          type_definitions TEXT,
+          explored_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(product_id, commit_sha)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_codebase_snapshots_product ON codebase_snapshots(product_id)`);
+
+      const productsInfo = db.prepare("PRAGMA table_info(products)").all() as { name: string }[];
+      if (!productsInfo.some(col => col.name === 'exploration_depth')) {
+        db.exec(`ALTER TABLE products ADD COLUMN exploration_depth TEXT DEFAULT 'standard' CHECK (exploration_depth IN ('shallow', 'standard', 'deep'))`);
+        console.log('[Migration 036] Added exploration_depth column to products');
+      }
+
+      console.log('[Migration 036] codebase_snapshots table created');
+    }
+  },
+  {
+    id: '037',
+    name: 'add_jira_sync',
+    up: (db) => {
+      console.log('[Migration 037] Adding jira_sync table...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS jira_sync (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+          jira_issue_id TEXT NOT NULL,
+          jira_issue_key TEXT NOT NULL,
+          jira_issue_url TEXT NOT NULL,
+          sync_enabled INTEGER DEFAULT 1,
+          last_synced_at TEXT,
+          last_sync_direction TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_sync_task ON jira_sync(task_id)`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_sync_jira_id ON jira_sync(jira_issue_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_jira_sync_key ON jira_sync(jira_issue_key)`);
+
+      console.log('[Migration 037] Created jira_sync table with indexes');
+    }
   }
 ];
 

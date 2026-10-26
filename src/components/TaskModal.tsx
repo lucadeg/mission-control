@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, Users, ImageIcon, Truck, Radio, MessageSquare, ExternalLink, HardDrive, Route } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { X, Save, Trash2, Activity, Package, Bot, ClipboardList, Plus, Users, ImageIcon, Truck, Radio, MessageSquare, ExternalLink, HardDrive, Route, BarChart3, Unlink, Loader2 } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { triggerAutoDispatch, shouldTriggerAutoDispatch } from '@/lib/auto-dispatch';
 import { ActivityLog } from './ActivityLog';
@@ -16,9 +16,11 @@ import { AgentLiveTab } from './AgentLiveTab';
 import { TaskChatTab } from './TaskChatTab';
 import { TaskFlightRecorder } from './TaskFlightRecorder';
 import { WorkspaceTab } from './WorkspaceTab';
+import { EnvironmentIssuePanel } from './EnvironmentIssuePanel';
+import { InsightsTab } from './InsightsTab';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 
-type TabType = 'overview' | 'planning' | 'convoy' | 'team' | 'activity' | 'flight-recorder' | 'deliverables' | 'images' | 'sessions' | 'workspace' | 'agent-live' | 'chat';
+type TabType = 'overview' | 'planning' | 'convoy' | 'team' | 'activity' | 'flight-recorder' | 'deliverables' | 'images' | 'sessions' | 'workspace' | 'agent-live' | 'chat' | 'insights';
 
 interface TaskModalProps {
   task?: Task;
@@ -40,6 +42,66 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const handleSpecLocked = useCallback(() => {
     window.location.reload();
   }, []);
+
+  // Jira integration state
+  const [jiraConfigured, setJiraConfigured] = useState(false);
+  const [jiraLinking, setJiraLinking] = useState(false);
+  const [jiraUnlinking, setJiraUnlinking] = useState(false);
+  const [taskJiraKey, setTaskJiraKey] = useState(task?.jira_issue_key || '');
+  const [taskJiraUrl, setTaskJiraUrl] = useState(task?.jira_issue_url || '');
+
+  // Check Jira config on mount
+  useEffect(() => {
+    fetch('/api/jira/status')
+      .then((res) => res.json())
+      .then((data) => setJiraConfigured(data.configured === true))
+      .catch(() => setJiraConfigured(false));
+  }, []);
+
+  const handleJiraLink = async () => {
+    if (!task) return;
+    setJiraLinking(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/jira`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setTaskJiraKey(data.jira_issue_key || '');
+        setTaskJiraUrl(data.jira_issue_url || '');
+        // Refresh the task in the store
+        const taskRes = await fetch(`/api/tasks/${task.id}`);
+        if (taskRes.ok) {
+          const updatedTask = await taskRes.json();
+          updateTask(updatedTask);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to link Jira issue:', error);
+    } finally {
+      setJiraLinking(false);
+    }
+  };
+
+  const handleJiraUnlink = async () => {
+    if (!task) return;
+    setJiraUnlinking(true);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/jira`, { method: 'DELETE' });
+      if (res.ok) {
+        setTaskJiraKey('');
+        setTaskJiraUrl('');
+        // Refresh the task in the store
+        const taskRes = await fetch(`/api/tasks/${task.id}`);
+        if (taskRes.ok) {
+          const updatedTask = await taskRes.json();
+          updateTask(updatedTask);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to unlink Jira issue:', error);
+    } finally {
+      setJiraUnlinking(false);
+    }
+  };
 
   const [form, setForm] = useState({
     title: task?.title || '',
@@ -199,10 +261,14 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
     { id: 'sessions' as TabType, label: 'Sessions', icon: <Bot className="w-4 h-4" /> },
     // Workspace tab — shown when task has workspace isolation
     ...(task?.workspace_path ? [{ id: 'workspace' as TabType, label: 'Workspace', icon: <HardDrive className="w-4 h-4" /> }] : []),
+    // Insights tab — shown for completed tasks or tasks with activities
+    ...(task && ['done', 'review', 'verification'].includes(task.status)
+      ? [{ id: 'insights' as TabType, label: 'Insights', icon: <BarChart3 className="w-4 h-4" /> }]
+      : []),
     // Chat is always available — messages dispatch the agent if needed
     { id: 'chat' as TabType, label: 'Chat', icon: <MessageSquare className="w-4 h-4" /> },
     // Agent Live only shown when agent is active
-    ...(task && ['in_progress', 'convoy_active', 'testing', 'verification'].includes(task.status)
+    ...(task && ['in_progress', 'convoy_active', 'testing', 'verification', 'review_fix'].includes(task.status)
       ? [
           { id: 'agent-live' as TabType, label: 'Agent Live', icon: <Radio className="w-4 h-4" /> },
         ]
@@ -250,6 +316,8 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           {/* Overview Tab */}
           {activeTab === 'overview' && (
             <form onSubmit={handleSubmit} className="space-y-4">
+          {task && <EnvironmentIssuePanel task={task} />}
+
           {/* Title */}
           <div>
             <label className="block text-sm font-medium mb-1">Title</label>
@@ -382,12 +450,78 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                   </span>
                 )}
               </div>
+              {/* Review-fix cycle count */}
+              {(task.review_fix_count ?? 0) > 0 && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs px-2 py-1 rounded font-medium bg-orange-500/20 text-orange-400">
+                    Review fix cycle {task.review_fix_count}/{task.review_fix_max ?? 3}
+                  </span>
+                  {task.status === 'review_fix' && (
+                    <span className="text-xs text-orange-300">Fixing reviewer feedback...</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {saveError && (
             <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-md">
               <span className="text-sm text-red-400">{saveError}</span>
+            </div>
+          )}
+
+          {/* Jira Integration */}
+          {task && jiraConfigured && (
+            <div className="p-3 bg-mc-bg rounded-lg border border-mc-border">
+              <label className="block text-sm font-medium mb-2">Jira</label>
+              {taskJiraKey ? (
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <svg className="w-4 h-4 text-blue-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M11.53 2c0 2.4 1.97 4.35 4.35 4.35h1.78v1.7c0 2.4 1.94 4.34 4.34 4.35V2.84a.84.84 0 0 0-.84-.84H11.53zM6.77 6.8a4.36 4.36 0 0 0 4.34 4.34h1.8v1.72a4.36 4.36 0 0 0 4.34 4.34V7.63a.84.84 0 0 0-.83-.83H6.77zM2 11.6a4.35 4.35 0 0 0 4.34 4.34h1.8v1.72A4.35 4.35 0 0 0 12.48 22v-9.57a.84.84 0 0 0-.84-.84H2z"/>
+                    </svg>
+                    <a
+                      href={taskJiraUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 truncate"
+                    >
+                      {taskJiraKey}
+                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                    </a>
+                    <span className="text-xs text-mc-text-secondary">Synced</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleJiraUnlink}
+                    disabled={jiraUnlinking}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-mc-text-secondary hover:text-mc-accent-red hover:bg-mc-accent-red/10 rounded transition-colors disabled:opacity-50"
+                  >
+                    {jiraUnlinking ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Unlink className="w-3.5 h-3.5" />
+                    )}
+                    Unlink
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleJiraLink}
+                  disabled={jiraLinking}
+                  className="flex items-center gap-2 px-3 py-2 text-sm bg-mc-bg-tertiary border border-mc-border rounded hover:border-blue-400/40 hover:text-blue-400 transition-colors disabled:opacity-50"
+                >
+                  {jiraLinking ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M11.53 2c0 2.4 1.97 4.35 4.35 4.35h1.78v1.7c0 2.4 1.94 4.34 4.34 4.35V2.84a.84.84 0 0 0-.84-.84H11.53zM6.77 6.8a4.36 4.36 0 0 0 4.34 4.34h1.8v1.72a4.36 4.36 0 0 0 4.34 4.34V7.63a.84.84 0 0 0-.83-.83H6.77zM2 11.6a4.35 4.35 0 0 0 4.34 4.34h1.8v1.72A4.35 4.35 0 0 0 12.48 22v-9.57a.84.84 0 0 0-.84-.84H2z"/>
+                    </svg>
+                  )}
+                  Link to Jira
+                </button>
+              )}
             </div>
           )}
             </form>
@@ -445,6 +579,11 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           {/* Workspace Tab */}
           {activeTab === 'workspace' && task && (
             <WorkspaceTab taskId={task.id} taskStatus={task.status} />
+          )}
+
+          {/* Insights Tab */}
+          {activeTab === 'insights' && task && (
+            <InsightsTab taskId={task.id} />
           )}
 
           {activeTab === 'chat' && task && (

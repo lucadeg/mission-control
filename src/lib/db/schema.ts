@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT,
-  status TEXT DEFAULT 'inbox' CHECK (status IN ('pending_dispatch', 'planning', 'inbox', 'assigned', 'in_progress', 'convoy_active', 'testing', 'review', 'verification', 'done')),
+  status TEXT DEFAULT 'inbox' CHECK (status IN ('pending_dispatch', 'planning', 'inbox', 'assigned', 'in_progress', 'convoy_active', 'testing', 'review', 'verification', 'review_fix', 'done')),
   priority TEXT DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
   assigned_agent_id TEXT REFERENCES agents(id),
   created_by_agent_id TEXT REFERENCES agents(id),
@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   workspace_base_commit TEXT,
   merge_status TEXT,
   merge_pr_url TEXT,
+  review_fix_count INTEGER DEFAULT 0,
+  review_fix_max INTEGER DEFAULT 3,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -198,6 +200,26 @@ CREATE TABLE IF NOT EXISTS openclaw_sessions (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Codex runtime session mapping
+CREATE TABLE IF NOT EXISTS codex_sessions (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT REFERENCES agents(id),
+  task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  codex_thread_id TEXT,
+  pid INTEGER,
+  status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+  command TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  log_path TEXT,
+  exit_code INTEGER,
+  signal TEXT,
+  error TEXT,
+  started_at TEXT DEFAULT (datetime('now')),
+  ended_at TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Workflow templates (per-workspace workflow definitions)
 CREATE TABLE IF NOT EXISTS workflow_templates (
   id TEXT PRIMARY KEY,
@@ -233,6 +255,13 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
   confidence REAL DEFAULT 0.5,
   created_by_agent_id TEXT REFERENCES agents(id),
   created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Application settings persisted for server-side workflows
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Task activities table (for real-time activity log)
@@ -338,6 +367,8 @@ CREATE TABLE IF NOT EXISTS products (
   cost_cap_monthly REAL,
   health_weight_config TEXT,
   batch_review_threshold INTEGER DEFAULT 10,
+  auto_fix_pr_reviews INTEGER DEFAULT 1,
+  exploration_depth TEXT DEFAULT 'standard' CHECK (exploration_depth IN ('shallow', 'standard', 'deep')),
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -754,6 +785,34 @@ CREATE TABLE IF NOT EXISTS skill_reports (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Codebase exploration snapshots (cached per product+commit)
+CREATE TABLE IF NOT EXISTS codebase_snapshots (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  commit_sha TEXT NOT NULL,
+  file_tree TEXT NOT NULL,
+  framework TEXT,
+  language TEXT,
+  loc INTEGER,
+  key_files TEXT,
+  type_definitions TEXT,
+  explored_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(product_id, commit_sha)
+);
+
+-- Jira Cloud sync mapping
+CREATE TABLE IF NOT EXISTS jira_sync (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+  jira_issue_id TEXT NOT NULL,
+  jira_issue_key TEXT NOT NULL,
+  jira_issue_url TEXT NOT NULL,
+  sync_enabled INTEGER DEFAULT 1,
+  last_synced_at TEXT,
+  last_sync_direction TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_agent_id);
@@ -787,6 +846,7 @@ CREATE INDEX IF NOT EXISTS idx_ideas_status ON ideas(status);
 CREATE INDEX IF NOT EXISTS idx_ideas_product_pending ON ideas(product_id, status) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_swipe_history_product ON swipe_history(product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_swipe_history_category ON swipe_history(product_id, category);
+CREATE INDEX IF NOT EXISTS idx_codebase_snapshots_product ON codebase_snapshots(product_id);
 CREATE INDEX IF NOT EXISTS idx_maybe_pool_next ON maybe_pool(product_id, next_evaluate_at);
 CREATE INDEX IF NOT EXISTS idx_cost_events_product ON cost_events(product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cost_events_workspace ON cost_events(workspace_id, created_at DESC);
@@ -817,4 +877,9 @@ CREATE INDEX IF NOT EXISTS idx_user_task_reads_user_task ON user_task_reads(user
 CREATE INDEX IF NOT EXISTS idx_product_skills_product ON product_skills(product_id, skill_type, status);
 CREATE INDEX IF NOT EXISTS idx_product_skills_confidence ON product_skills(confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_skill_reports_skill ON skill_reports(skill_id);
+CREATE INDEX IF NOT EXISTS idx_codex_sessions_task ON codex_sessions(task_id, status);
+CREATE INDEX IF NOT EXISTS idx_codex_sessions_agent ON codex_sessions(agent_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_sync_task ON jira_sync(task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_sync_jira_id ON jira_sync(jira_issue_id);
+CREATE INDEX IF NOT EXISTS idx_jira_sync_key ON jira_sync(jira_issue_key);
 `;

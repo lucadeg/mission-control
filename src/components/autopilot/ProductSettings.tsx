@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Save, Loader, ExternalLink } from 'lucide-react';
+import { Save, Loader, ExternalLink, Plug } from 'lucide-react';
 import { HealthWeightSliders } from './HealthWeightSliders';
+import { MCPTab } from '@/components/MCPTab';
 import type { Product, BuildMode, HealthWeightConfig } from '@/lib/types';
 
 interface Props {
@@ -22,6 +23,7 @@ export function ProductSettings({ product, onSave }: Props) {
     cost_cap_per_task: product.cost_cap_per_task ?? '',
     cost_cap_monthly: product.cost_cap_monthly ?? '',
     batch_review_threshold: product.batch_review_threshold ?? 10,
+    exploration_depth: product.exploration_depth || 'standard',
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -37,7 +39,8 @@ export function ProductSettings({ product, onSave }: Props) {
     form.icon !== (product.icon || '📦') ||
     String(form.cost_cap_per_task) !== String(product.cost_cap_per_task ?? '') ||
     String(form.cost_cap_monthly) !== String(product.cost_cap_monthly ?? '') ||
-    form.batch_review_threshold !== (product.batch_review_threshold ?? 10);
+    form.batch_review_threshold !== (product.batch_review_threshold ?? 10) ||
+    form.exploration_depth !== (product.exploration_depth || 'standard');
 
   async function handleSave() {
     setSaving(true);
@@ -58,6 +61,7 @@ export function ProductSettings({ product, onSave }: Props) {
       if (form.cost_cap_monthly !== '') body.cost_cap_monthly = Number(form.cost_cap_monthly);
       else body.cost_cap_monthly = null;
       body.batch_review_threshold = Number(form.batch_review_threshold) || 10;
+      body.exploration_depth = form.exploration_depth;
 
       const res = await fetch(`/api/products/${product.id}`, {
         method: 'PATCH',
@@ -226,6 +230,19 @@ export function ProductSettings({ product, onSave }: Props) {
           </select>
         </div>
 
+        <div>
+          <label className={labelClass}>Codebase Exploration Depth</label>
+          <select
+            value={form.exploration_depth}
+            onChange={e => setForm(f => ({ ...f, exploration_depth: e.target.value as 'shallow' | 'standard' | 'deep' }))}
+            className={inputClass}
+          >
+            <option value="shallow">Shallow — file tree only</option>
+            <option value="standard">Standard — tree + relevant files + types</option>
+            <option value="deep">Deep — tree + all exports + dependency graph</option>
+          </select>
+        </div>
+
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className={labelClass}>Cost Cap / Task ($)</label>
@@ -275,6 +292,15 @@ export function ProductSettings({ product, onSave }: Props) {
             try { return JSON.parse(product.health_weight_config); } catch { return undefined; }
           })() : undefined}
         />
+      </div>
+
+      {/* MCP Integrations */}
+      <div className="bg-mc-bg-secondary border border-mc-border rounded-lg p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Plug className="w-4 h-4 text-mc-text-secondary" />
+          <h3 className="text-sm font-medium text-mc-text-secondary uppercase tracking-wider">External Tools (MCP)</h3>
+        </div>
+        <MCPTab productId={product.id} />
       </div>
 
       {/* Danger Zone */}

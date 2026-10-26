@@ -2,7 +2,7 @@
 
 export type AgentStatus = 'standby' | 'working' | 'offline';
 
-export type TaskStatus = 'pending_dispatch' | 'planning' | 'inbox' | 'assigned' | 'in_progress' | 'convoy_active' | 'testing' | 'review' | 'verification' | 'done';
+export type TaskStatus = 'pending_dispatch' | 'planning' | 'inbox' | 'assigned' | 'in_progress' | 'convoy_active' | 'testing' | 'review' | 'verification' | 'review_fix' | 'done';
 
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -73,6 +73,9 @@ export interface Task {
   planning_complete?: number;
   planning_dispatch_error?: string;
   planning_session_key?: string;
+  planning_messages?: string;
+  planning_spec?: string;
+  planning_agents?: string;
   images?: string; // JSON array of TaskImage objects
   convoy_id?: string;
   is_subtask?: number;
@@ -91,6 +94,11 @@ export interface Task {
   workspace_base_commit?: string;
   merge_status?: 'pending' | 'merged' | 'conflict' | 'pr_created' | 'abandoned';
   merge_pr_url?: string;
+  browser_test_url?: string;
+  review_fix_count?: number;
+  review_fix_max?: number;
+  jira_issue_key?: string;
+  jira_issue_url?: string;
   created_at: string;
   updated_at: string;
   // Joined fields
@@ -172,6 +180,7 @@ export interface WorkspaceStats {
     convoy_active: number;
     testing: number;
     review: number;
+    review_fix: number;
     verification: number;
     done: number;
     total: number;
@@ -230,6 +239,25 @@ export interface OpenClawSession {
   status: string;
   session_type: 'persistent' | 'subagent';
   task_id?: string;
+  ended_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CodexSession {
+  id: string;
+  agent_id: string;
+  task_id: string;
+  codex_thread_id?: string;
+  pid?: number;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  command: string;
+  cwd: string;
+  log_path?: string;
+  exit_code?: number;
+  signal?: string;
+  error?: string;
+  started_at: string;
   ended_at?: string;
   created_at: string;
   updated_at: string;
@@ -472,6 +500,9 @@ export interface Product {
   cost_cap_monthly?: number;
   health_weight_config?: string; // JSON: HealthWeightConfig
   batch_review_threshold?: number;
+  browser_test_enabled?: number;
+  auto_fix_pr_reviews?: number;
+  exploration_depth?: 'shallow' | 'standard' | 'deep';
   created_at: string;
   updated_at: string;
 }
